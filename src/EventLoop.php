@@ -67,7 +67,7 @@ class EventLoop
 
     /**
      * 添加定时器
-     * 
+     *
      * @param float $interval 间隔时间（秒）
      * @param callable $callback 回调函数
      * @return int 定时器ID
@@ -89,7 +89,7 @@ class EventLoop
 
     /**
      * 添加循环定时器
-     * 
+     *
      * @param float $interval 间隔时间（秒）
      * @param callable $callback 回调函数
      * @return int 定时器ID

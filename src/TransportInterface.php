@@ -23,7 +23,7 @@ interface TransportInterface
 
     /**
      * 发送数据包
-     * 
+     *
      * @param string $data 要发送的数据
      * @param string $host 目标主机
      * @param int $port 目标端口
@@ -32,7 +32,7 @@ interface TransportInterface
 
     /**
      * 接收数据包
-     * 
+     *
      * @return array{data: string, host: string, port: int}|null
      */
     public function receive(): ?array;
