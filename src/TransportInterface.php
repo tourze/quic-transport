@@ -6,7 +6,7 @@ namespace Tourze\QUIC\Transport;
 
 /**
  * QUIC传输层接口
- * 
+ *
  * 定义QUIC协议传输层的核心抽象方法
  */
 interface TransportInterface
@@ -56,4 +56,4 @@ interface TransportInterface
      * 关闭传输层连接
      */
     public function close(): void;
-} 
+}

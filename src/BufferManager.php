@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace Tourze\QUIC\Transport;
 
-use RuntimeException;
+use Tourze\QUIC\Transport\Exception\TransportException;
 
 /**
  * 缓冲区管理器
- * 
+ *
  * 管理QUIC传输层的接收和发送缓冲区
  */
 class BufferManager
@@ -248,7 +248,7 @@ class BufferManager
     public function setMaxBufferSize(int $size): void
     {
         if ($size < 0) {
-            throw new RuntimeException('缓冲区大小不能为负数');
+            throw new TransportException('缓冲区大小不能为负数');
         }
         $this->maxBufferSize = $size;
     }
@@ -308,5 +308,21 @@ class BufferManager
         }
 
         return $cleaned;
+    }
+
+    /**
+     * 清理过期缓冲区 (别名方法，用于兼容)
+     */
+    public function cleanExpiredBuffers(float $maxAge = 300.0): int
+    {
+        return $this->cleanupExpiredBuffers($maxAge);
+    }
+
+    /**
+     * 获取统计信息 (别名方法，用于兼容)
+     */
+    public function getStatistics(): array
+    {
+        return $this->getBufferStats();
     }
 } 

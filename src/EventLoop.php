@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Tourze\QUIC\Transport;
 
-use RuntimeException;
 use SplPriorityQueue;
+use Tourze\QUIC\Transport\Exception\TransportException;
 
 /**
  * 事件循环
@@ -76,14 +76,14 @@ class EventLoop
     {
         $timerId = $this->nextTimerId++;
         $executeAt = microtime(true) + $interval;
-        
+
         $this->timers->insert([
             'id' => $timerId,
             'callback' => $callback,
             'executeAt' => $executeAt,
             'interval' => null, // 单次执行
         ], -$executeAt); // 负值让最早执行的排在前面
-        
+
         return $timerId;
     }
 
@@ -98,14 +98,14 @@ class EventLoop
     {
         $timerId = $this->nextTimerId++;
         $executeAt = microtime(true) + $interval;
-        
+
         $this->timers->insert([
             'id' => $timerId,
             'callback' => $callback,
             'executeAt' => $executeAt,
             'interval' => $interval, // 循环执行
         ], -$executeAt);
-        
+
         return $timerId;
     }
 
@@ -116,14 +116,14 @@ class EventLoop
     {
         // 重构定时器队列，移除指定ID的定时器
         $newTimers = new SplPriorityQueue();
-        
+
         while (!$this->timers->isEmpty()) {
             $timer = $this->timers->extract();
             if ($timer['id'] !== $timerId) {
                 $newTimers->insert($timer, -$timer['executeAt']);
             }
         }
-        
+
         $this->timers = $newTimers;
     }
 
@@ -223,7 +223,7 @@ class EventLoop
         $result = stream_select($read, $write, $except, $timeout['sec'], $timeout['usec']);
 
         if ($result === false) {
-            throw new RuntimeException('stream_select 失败');
+            throw new TransportException('stream_select 失败');
         }
 
         // 处理可读流
@@ -262,7 +262,7 @@ class EventLoop
 
         $timer = $this->timers->top();
         $timeout = max(0, $timer['executeAt'] - microtime(true));
-        
+
         return [
             'sec' => (int)$timeout,
             'usec' => (int)(($timeout - (int)$timeout) * 1000000)
@@ -276,4 +276,18 @@ class EventLoop
     {
         return $this->isRunning;
     }
-} 
+
+    /**
+     * 获取统计信息
+     */
+    public function getStatistics(): array
+    {
+        return [
+            'is_running' => $this->isRunning,
+            'read_streams_count' => count($this->readStreams),
+            'write_streams_count' => count($this->writeStreams),
+            'timers_count' => $this->timers->count(),
+            'next_timer_id' => $this->nextTimerId,
+        ];
+    }
+}
