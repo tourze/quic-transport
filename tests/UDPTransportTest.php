@@ -2,26 +2,34 @@
 
 declare(strict_types=1);
 
-namespace Tourze\QUIC\Transport\Tests;
+namespace Tourze\Tests\Transport;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use Tourze\QUIC\Transport\UDPTransport;
 
 /**
  * UDP传输层测试
+ *
+ * @internal
  */
-class UDPTransportTest extends TestCase
+#[CoversClass(UDPTransport::class)]
+final class UDPTransportTest extends TestCase
 {
     private UDPTransport $transport;
 
     protected function setUp(): void
     {
+        parent::setUp();
+
         $this->transport = new UDPTransport('127.0.0.1', 0);
     }
 
     protected function tearDown(): void
     {
-        $this->transport->close();
+        if (isset($this->transport) && $this->transport->isReady()) {
+            $this->transport->close();
+        }
     }
 
     public function testTransportStartAndStop(): void
@@ -87,10 +95,52 @@ class UDPTransportTest extends TestCase
             $this->assertEquals($testData, $received['data']);
             $this->assertEquals($addr1['host'], $received['host']);
             $this->assertEquals($addr1['port'], $received['port']);
-
         } finally {
             $transport1->close();
             $transport2->close();
         }
+    }
+
+    public function testClose(): void
+    {
+        $this->transport->start();
+        self::assertTrue($this->transport->isReady());
+
+        $this->transport->close();
+        self::assertFalse($this->transport->isReady());
+    }
+
+    public function testReceive(): void
+    {
+        $this->transport->start();
+        $this->transport->setTimeout(100); // 100ms timeout
+
+        $result = $this->transport->receive();
+        self::assertNull($result); // 应该超时返回null
+    }
+
+    public function testStart(): void
+    {
+        self::assertFalse($this->transport->isReady());
+
+        $this->transport->start();
+        self::assertTrue($this->transport->isReady());
+
+        // 重复启动应该没有副作用
+        $this->transport->start();
+        self::assertTrue($this->transport->isReady());
+    }
+
+    public function testStop(): void
+    {
+        $this->transport->start();
+        self::assertTrue($this->transport->isReady());
+
+        $this->transport->stop();
+        self::assertFalse($this->transport->isReady());
+
+        // 重复停止应该没有副作用
+        $this->transport->stop();
+        self::assertFalse($this->transport->isReady());
     }
 }

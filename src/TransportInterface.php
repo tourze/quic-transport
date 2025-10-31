@@ -26,7 +26,7 @@ interface TransportInterface
      *
      * @param string $data 要发送的数据
      * @param string $host 目标主机
-     * @param int $port 目标端口
+     * @param int    $port 目标端口
      */
     public function send(string $data, string $host, int $port): bool;
 
@@ -49,6 +49,8 @@ interface TransportInterface
 
     /**
      * 获取本地绑定地址
+     *
+     * @return array{host: string, port: int}
      */
     public function getLocalAddress(): array;
 

@@ -13,10 +13,15 @@ use Tourze\QUIC\Transport\Exception\TransportException;
  */
 class BufferManager
 {
+    /** @var array<string, array{data: string, size: int, timestamp: float}> */
     private array $receiveBuffers = [];
+
+    /** @var array<string, array{data: string, size: int, timestamp: float}> */
     private array $sendBuffers = [];
-    private int $maxBufferSize;
+
     private int $totalBufferSize = 0;
+
+    private int $maxBufferSize;
 
     public function __construct(int $maxBufferSize = 1048576) // 默认1MB
     {
@@ -35,7 +40,7 @@ class BufferManager
         $this->receiveBuffers[$connectionId] = [
             'data' => '',
             'size' => 0,
-            'timestamp' => microtime(true)
+            'timestamp' => microtime(true),
         ];
     }
 
@@ -51,7 +56,7 @@ class BufferManager
         $this->sendBuffers[$connectionId] = [
             'data' => '',
             'size' => 0,
-            'timestamp' => microtime(true)
+            'timestamp' => microtime(true),
         ];
     }
 
@@ -65,15 +70,19 @@ class BufferManager
         }
 
         $dataSize = strlen($data);
-        
+
         // 检查缓冲区大小限制
         if ($this->totalBufferSize + $dataSize > $this->maxBufferSize) {
             return false;
         }
 
-        $this->receiveBuffers[$connectionId]['data'] .= $data;
-        $this->receiveBuffers[$connectionId]['size'] += $dataSize;
-        $this->receiveBuffers[$connectionId]['timestamp'] = microtime(true);
+        $buffer = $this->receiveBuffers[$connectionId];
+        assert(isset($buffer['data'], $buffer['size'], $buffer['timestamp']));
+
+        $buffer['data'] .= $data;
+        $buffer['size'] += $dataSize;
+        $buffer['timestamp'] = microtime(true);
+        $this->receiveBuffers[$connectionId] = $buffer;
         $this->totalBufferSize += $dataSize;
 
         return true;
@@ -88,21 +97,23 @@ class BufferManager
             return '';
         }
 
-        $buffer = &$this->receiveBuffers[$connectionId];
-        
-        if ($length === 0 || $length >= $buffer['size']) {
+        $bufferSize = $this->receiveBuffers[$connectionId]['size'];
+        $bufferData = $this->receiveBuffers[$connectionId]['data'];
+
+        if (0 === $length || $length >= $bufferSize) {
             // 读取全部数据
-            $data = $buffer['data'];
-            $this->totalBufferSize -= $buffer['size'];
-            $buffer['data'] = '';
-            $buffer['size'] = 0;
+            $data = $bufferData;
+            $this->totalBufferSize -= $bufferSize;
+            $this->receiveBuffers[$connectionId]['data'] = '';
+            $this->receiveBuffers[$connectionId]['size'] = 0;
+
             return $data;
         }
 
         // 读取指定长度的数据
-        $data = substr($buffer['data'], 0, $length);
-        $buffer['data'] = substr($buffer['data'], $length);
-        $buffer['size'] -= $length;
+        $data = substr($bufferData, 0, $length);
+        $this->receiveBuffers[$connectionId]['data'] = substr($bufferData, $length);
+        $this->receiveBuffers[$connectionId]['size'] -= $length;
         $this->totalBufferSize -= $length;
 
         return $data;
@@ -118,15 +129,19 @@ class BufferManager
         }
 
         $dataSize = strlen($data);
-        
+
         // 检查缓冲区大小限制
         if ($this->totalBufferSize + $dataSize > $this->maxBufferSize) {
             return false;
         }
 
-        $this->sendBuffers[$connectionId]['data'] .= $data;
-        $this->sendBuffers[$connectionId]['size'] += $dataSize;
-        $this->sendBuffers[$connectionId]['timestamp'] = microtime(true);
+        $buffer = $this->sendBuffers[$connectionId];
+        assert(isset($buffer['data'], $buffer['size'], $buffer['timestamp']));
+
+        $buffer['data'] .= $data;
+        $buffer['size'] += $dataSize;
+        $buffer['timestamp'] = microtime(true);
+        $this->sendBuffers[$connectionId] = $buffer;
         $this->totalBufferSize += $dataSize;
 
         return true;
@@ -141,21 +156,23 @@ class BufferManager
             return '';
         }
 
-        $buffer = &$this->sendBuffers[$connectionId];
-        
-        if ($length === 0 || $length >= $buffer['size']) {
+        $bufferSize = $this->sendBuffers[$connectionId]['size'];
+        $bufferData = $this->sendBuffers[$connectionId]['data'];
+
+        if (0 === $length || $length >= $bufferSize) {
             // 读取全部数据
-            $data = $buffer['data'];
-            $this->totalBufferSize -= $buffer['size'];
-            $buffer['data'] = '';
-            $buffer['size'] = 0;
+            $data = $bufferData;
+            $this->totalBufferSize -= $bufferSize;
+            $this->sendBuffers[$connectionId]['data'] = '';
+            $this->sendBuffers[$connectionId]['size'] = 0;
+
             return $data;
         }
 
         // 读取指定长度的数据
-        $data = substr($buffer['data'], 0, $length);
-        $buffer['data'] = substr($buffer['data'], $length);
-        $buffer['size'] -= $length;
+        $data = substr($bufferData, 0, $length);
+        $this->sendBuffers[$connectionId]['data'] = substr($bufferData, $length);
+        $this->sendBuffers[$connectionId]['size'] -= $length;
         $this->totalBufferSize -= $length;
 
         return $data;
@@ -213,8 +230,8 @@ class BufferManager
      */
     public function isReceiveBufferEmpty(string $connectionId): bool
     {
-        return !isset($this->receiveBuffers[$connectionId]) || 
-               $this->receiveBuffers[$connectionId]['size'] === 0;
+        return !isset($this->receiveBuffers[$connectionId])
+               || 0 === $this->receiveBuffers[$connectionId]['size'];
     }
 
     /**
@@ -222,8 +239,8 @@ class BufferManager
      */
     public function isSendBufferEmpty(string $connectionId): bool
     {
-        return !isset($this->sendBuffers[$connectionId]) || 
-               $this->sendBuffers[$connectionId]['size'] === 0;
+        return !isset($this->sendBuffers[$connectionId])
+               || 0 === $this->sendBuffers[$connectionId]['size'];
     }
 
     /**
@@ -255,6 +272,8 @@ class BufferManager
 
     /**
      * 获取所有连接的缓冲区统计信息
+     *
+     * @return array{total_buffer_size: int, max_buffer_size: int, connections: array<string, array{receive?: array{size: int, timestamp: float}, send?: array{size: int, timestamp: float}}>}
      */
     public function getBufferStats(): array
     {
@@ -268,7 +287,7 @@ class BufferManager
         foreach ($this->receiveBuffers as $connectionId => $buffer) {
             $stats['connections'][$connectionId]['receive'] = [
                 'size' => $buffer['size'],
-                'timestamp' => $buffer['timestamp']
+                'timestamp' => $buffer['timestamp'],
             ];
         }
 
@@ -276,7 +295,7 @@ class BufferManager
         foreach ($this->sendBuffers as $connectionId => $buffer) {
             $stats['connections'][$connectionId]['send'] = [
                 'size' => $buffer['size'],
-                'timestamp' => $buffer['timestamp']
+                'timestamp' => $buffer['timestamp'],
             ];
         }
 
@@ -295,7 +314,7 @@ class BufferManager
         foreach ($this->receiveBuffers as $connectionId => $buffer) {
             if ($now - $buffer['timestamp'] > $maxAge) {
                 $this->clearReceiveBuffer($connectionId);
-                $cleaned++;
+                ++$cleaned;
             }
         }
 
@@ -303,7 +322,7 @@ class BufferManager
         foreach ($this->sendBuffers as $connectionId => $buffer) {
             if ($now - $buffer['timestamp'] > $maxAge) {
                 $this->clearSendBuffer($connectionId);
-                $cleaned++;
+                ++$cleaned;
             }
         }
 
@@ -320,9 +339,11 @@ class BufferManager
 
     /**
      * 获取统计信息 (别名方法，用于兼容)
+     *
+     * @return array{total_buffer_size: int, max_buffer_size: int, connections: array<string, array{receive?: array{size: int, timestamp: float}, send?: array{size: int, timestamp: float}}>}
      */
     public function getStatistics(): array
     {
         return $this->getBufferStats();
     }
-} 
+}

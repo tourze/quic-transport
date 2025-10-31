@@ -4,7 +4,8 @@ declare(strict_types=1);
 
 namespace Tourze\QUIC\Transport;
 
-use SplPriorityQueue;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 use Tourze\QUIC\Transport\Exception\TransportException;
 
 /**
@@ -15,61 +16,84 @@ use Tourze\QUIC\Transport\Exception\TransportException;
 class EventLoop
 {
     private bool $isRunning = false;
+
+    /** @var array<int, resource> */
     private array $readStreams = [];
+
+    /** @var array<int, resource> */
     private array $writeStreams = [];
+
+    /** @var array<int, callable> */
     private array $readCallbacks = [];
+
+    /** @var array<int, callable> */
     private array $writeCallbacks = [];
-    private SplPriorityQueue $timers;
+
+    /** @var \SplPriorityQueue<float, array{id: int, callback: callable, executeAt: float, interval: float|null}> */
+    private \SplPriorityQueue $timers;
+
     private int $nextTimerId = 1;
 
-    public function __construct()
+    private LoggerInterface $logger;
+
+    public function __construct(?LoggerInterface $logger = null)
     {
-        $this->timers = new SplPriorityQueue();
+        $this->timers = new \SplPriorityQueue();
+        $this->logger = $logger ?? new NullLogger();
     }
 
     /**
      * 添加读取监听
+     * @param resource $stream
      */
     public function addReadStream($stream, callable $callback): void
     {
-        $id = (int)$stream;
+        assert(is_resource($stream));
+        $id = (int) $stream;
         $this->readStreams[$id] = $stream;
         $this->readCallbacks[$id] = $callback;
     }
 
     /**
      * 添加写入监听
+     * @param resource $stream
      */
     public function addWriteStream($stream, callable $callback): void
     {
-        $id = (int)$stream;
+        assert(is_resource($stream));
+        $id = (int) $stream;
         $this->writeStreams[$id] = $stream;
         $this->writeCallbacks[$id] = $callback;
     }
 
     /**
      * 移除读取监听
+     * @param resource $stream
      */
     public function removeReadStream($stream): void
     {
-        $id = (int)$stream;
+        assert(is_resource($stream));
+        $id = (int) $stream;
         unset($this->readStreams[$id], $this->readCallbacks[$id]);
     }
 
     /**
      * 移除写入监听
+     * @param resource $stream
      */
     public function removeWriteStream($stream): void
     {
-        $id = (int)$stream;
+        assert(is_resource($stream));
+        $id = (int) $stream;
         unset($this->writeStreams[$id], $this->writeCallbacks[$id]);
     }
 
     /**
      * 添加定时器
      *
-     * @param float $interval 间隔时间（秒）
+     * @param float    $interval 间隔时间（秒）
      * @param callable $callback 回调函数
+     *
      * @return int 定时器ID
      */
     public function addTimer(float $interval, callable $callback): int
@@ -90,8 +114,9 @@ class EventLoop
     /**
      * 添加循环定时器
      *
-     * @param float $interval 间隔时间（秒）
+     * @param float    $interval 间隔时间（秒）
      * @param callable $callback 回调函数
+     *
      * @return int 定时器ID
      */
     public function addPeriodicTimer(float $interval, callable $callback): int
@@ -115,10 +140,12 @@ class EventLoop
     public function cancelTimer(int $timerId): void
     {
         // 重构定时器队列，移除指定ID的定时器
-        $newTimers = new SplPriorityQueue();
+        /** @var \SplPriorityQueue<float, array{id: int, callback: callable(): mixed, executeAt: float, interval: float|null}> $newTimers */
+        $newTimers = new \SplPriorityQueue();
 
         while (!$this->timers->isEmpty()) {
             $timer = $this->timers->extract();
+            assert(is_array($timer) && isset($timer['id'], $timer['executeAt']));
             if ($timer['id'] !== $timerId) {
                 $newTimers->insert($timer, -$timer['executeAt']);
             }
@@ -173,32 +200,74 @@ class EventLoop
     private function processTimers(): void
     {
         $now = microtime(true);
+        $readyTimers = $this->collectExpiredTimers($now);
+        $this->executeTimers($readyTimers, $now);
+    }
+
+    /**
+     * 收集到期的定时器
+     *
+     * @return array<array{id: int, callback: callable, executeAt: float, interval: float|null}>
+     */
+    private function collectExpiredTimers(float $now): array
+    {
+        /** @var array<array{id: int, callback: callable, executeAt: float, interval: float|null}> $readyTimers */
         $readyTimers = [];
 
-        // 收集到期的定时器
         while (!$this->timers->isEmpty()) {
             $timer = $this->timers->top();
+            assert(is_array($timer) && isset($timer['executeAt']));
             if ($timer['executeAt'] <= $now) {
-                $readyTimers[] = $this->timers->extract();
+                $extractedTimer = $this->timers->extract();
+                assert(is_array($extractedTimer) && isset($extractedTimer['id'], $extractedTimer['callback'], $extractedTimer['executeAt']) && array_key_exists('interval', $extractedTimer));
+                $readyTimers[] = $extractedTimer;
             } else {
                 break;
             }
         }
 
-        // 执行定时器回调
-        foreach ($readyTimers as $timer) {
-            try {
-                call_user_func($timer['callback']);
-            } catch (\Throwable $e) {
-                // 记录错误但不中断事件循环
-                error_log("定时器回调错误: " . $e->getMessage());
-            }
+        return $readyTimers;
+    }
 
-            // 如果是循环定时器，重新添加
-            if ($timer['interval'] !== null) {
-                $timer['executeAt'] = $now + $timer['interval'];
-                $this->timers->insert($timer, -$timer['executeAt']);
-            }
+    /**
+     * 执行定时器回调
+     *
+     * @param array<array{id: int, callback: callable, executeAt: float, interval: float|null}> $timers
+     */
+    private function executeTimers(array $timers, float $now): void
+    {
+        foreach ($timers as $timer) {
+            assert(is_array($timer) && isset($timer['callback']) && array_key_exists('interval', $timer) && isset($timer['executeAt']));
+
+            $this->executeTimerCallback($timer);
+            $this->reschedulePeriodicTimer($timer, $now);
+        }
+    }
+
+    /**
+     * 执行定时器回调
+     *
+     * @param array{id: int, callback: callable, executeAt: float, interval: float|null} $timer
+     */
+    private function executeTimerCallback(array $timer): void
+    {
+        try {
+            call_user_func($timer['callback']);
+        } catch (\Throwable $e) {
+            $this->logger->error('定时器回调错误', ['exception' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * 重新调度循环定时器
+     *
+     * @param array{id: int, callback: callable, executeAt: float, interval: float|null} $timer
+     */
+    private function reschedulePeriodicTimer(array $timer, float $now): void
+    {
+        if (null !== $timer['interval']) {
+            $timer['executeAt'] = $now + $timer['interval'];
+            $this->timers->insert($timer, -$timer['executeAt']);
         }
     }
 
@@ -207,12 +276,25 @@ class EventLoop
      */
     private function processStreams(): void
     {
-        if (empty($this->readStreams) && empty($this->writeStreams)) {
+        if (0 === count($this->readStreams) && 0 === count($this->writeStreams)) {
             // 没有流需要监听，短暂休眠避免CPU空转
             usleep(1000);
+
             return;
         }
 
+        $selectedStreams = $this->selectStreams();
+        $this->processReadableStreams($selectedStreams['read']);
+        $this->processWritableStreams($selectedStreams['write']);
+    }
+
+    /**
+     * 选择就绪的流
+     *
+     * @return array{read: array<resource>, write: array<resource>}
+     */
+    private function selectStreams(): array
+    {
         $read = $this->readStreams;
         $write = $this->writeStreams;
         $except = [];
@@ -222,37 +304,65 @@ class EventLoop
 
         $result = stream_select($read, $write, $except, $timeout['sec'], $timeout['usec']);
 
-        if ($result === false) {
+        if (false === $result) {
             throw new TransportException('stream_select 失败');
         }
 
-        // 处理可读流
-        foreach ($read as $stream) {
-            $id = (int)$stream;
-            if (isset($this->readCallbacks[$id])) {
-                try {
-                    call_user_func($this->readCallbacks[$id], $stream);
-                } catch (\Throwable $e) {
-                    error_log("读取回调错误: " . $e->getMessage());
-                }
-            }
+        /** @var array<resource> $read */
+        /** @var array<resource> $write */
+        return ['read' => $read, 'write' => $write];
+    }
+
+    /**
+     * 处理可读流
+     *
+     * @param array<resource> $readableStreams
+     */
+    private function processReadableStreams(array $readableStreams): void
+    {
+        foreach ($readableStreams as $stream) {
+            $this->processStreamCallback($stream, $this->readCallbacks, '读取回调错误');
+        }
+    }
+
+    /**
+     * 处理可写流
+     *
+     * @param array<resource> $writableStreams
+     */
+    private function processWritableStreams(array $writableStreams): void
+    {
+        foreach ($writableStreams as $stream) {
+            $this->processStreamCallback($stream, $this->writeCallbacks, '写入回调错误');
+        }
+    }
+
+    /**
+     * 处理流回调
+     *
+     * @param resource $stream
+     * @param array<int, callable> $callbacks
+     * @param string $errorMessage
+     */
+    private function processStreamCallback($stream, array $callbacks, string $errorMessage): void
+    {
+        assert(is_resource($stream));
+        $id = (int) $stream;
+        if (!isset($callbacks[$id])) {
+            return;
         }
 
-        // 处理可写流
-        foreach ($write as $stream) {
-            $id = (int)$stream;
-            if (isset($this->writeCallbacks[$id])) {
-                try {
-                    call_user_func($this->writeCallbacks[$id], $stream);
-                } catch (\Throwable $e) {
-                    error_log("写入回调错误: " . $e->getMessage());
-                }
-            }
+        try {
+            call_user_func($callbacks[$id], $stream);
+        } catch (\Throwable $e) {
+            $this->logger->error($errorMessage, ['exception' => $e->getMessage()]);
         }
     }
 
     /**
      * 获取下一个定时器的超时时间
+     *
+     * @return array{sec: int, usec: int}
      */
     private function getNextTimerTimeout(): array
     {
@@ -261,11 +371,12 @@ class EventLoop
         }
 
         $timer = $this->timers->top();
+        assert(is_array($timer) && isset($timer['executeAt']));
         $timeout = max(0, $timer['executeAt'] - microtime(true));
 
         return [
-            'sec' => (int)$timeout,
-            'usec' => (int)(($timeout - (int)$timeout) * 1000000)
+            'sec' => (int) $timeout,
+            'usec' => (int) (($timeout - (int) $timeout) * 1000000),
         ];
     }
 
@@ -279,6 +390,8 @@ class EventLoop
 
     /**
      * 获取统计信息
+     *
+     * @return array{is_running: bool, read_streams_count: int, write_streams_count: int, timers_count: int, next_timer_id: int}
      */
     public function getStatistics(): array
     {
