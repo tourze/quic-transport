@@ -32,7 +32,6 @@ final class TransportManagerTest extends TestCase
      */
     private function createTransportStub(): TransportInterface
     {
-        // @phpstan-ignore-next-line symplify.noTestMocks
         return new class implements TransportInterface {
             public function start(): void
             {
@@ -85,8 +84,6 @@ final class TransportManagerTest extends TestCase
         $errorMessage = $config['errorMessage'] ?? '';
         /** @var array{data: string, host: string, port: int}|null $returnPacket */
         $returnPacket = $config['returnPacket'] ?? null;
-
-        // @phpstan-ignore-next-line symplify.noTestMocks
         return new class($shouldThrow, $errorMessage, $returnPacket) implements TransportInterface {
             public bool $startCalled = false;
 
@@ -531,7 +528,6 @@ final class TransportManagerTest extends TestCase
         $fireEvent->invoke($this->manager, $event);
 
         // 验证原始回调没有被执行（因为变量没有被重置）
-        // @phpstan-ignore-next-line This assertion verifies callback removal behavior
         self::assertTrue($callbackExecuted); // 第一次执行后应该还是true
         self::assertFalse($executedAfterRemoval); // 新变量应该还是false
     }
